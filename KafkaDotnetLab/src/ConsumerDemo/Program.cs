@@ -30,54 +30,23 @@ internal class Program
         {
             var result = consumer.Consume();
 
-            var messageId =
-                $"{result.Topic}-{result.Partition.Value}-{result.Offset.Value}";
-
             Console.WriteLine();
             Console.WriteLine($"Received: {result.Message.Value}");
-            Console.WriteLine($"MessageId: {messageId}");
-
-            using var connection = new SqliteConnection(ConnectionString);
-            connection.Open();
-
-            using var transaction = connection.BeginTransaction();
-
-            if (IsAlreadyProcessed(connection, transaction, messageId))
-            {
-                Console.WriteLine("Already processed -> skipping business logic.");
-
-                transaction.Commit();
-
-                consumer.Commit(result);
-
-                Console.WriteLine("Offset committed.");
-
-                continue;
-            }
-
-            Console.WriteLine("Executing business logic...");
-
-            InsertOrder(
-                connection,
-                transaction,
-                result.Message.Value);
-
-            SaveProcessedMessage(
-                connection,
-                transaction,
-                messageId);
-
-            transaction.Commit();
-
-            Console.WriteLine("DATABASE TRANSACTION COMMITTED");
-
-            Console.WriteLine();
-            Console.WriteLine("Press ENTER to commit Kafka offset.");
-            Console.ReadLine();
+            Console.WriteLine($"Partition: {result.Partition}");
+            Console.WriteLine($"Offset: {result.Offset}");
 
             consumer.Commit(result);
 
+            Console.WriteLine();
             Console.WriteLine("Kafka offset committed.");
+            Console.WriteLine("CRASH NOW before business logic.");
+            Console.WriteLine("Press ENTER only if you want business logic to run.");
+
+            Console.ReadLine();
+
+            Console.WriteLine();
+            Console.WriteLine("Executing business logic...");
+            Console.WriteLine("DATABASE WRITE SUCCESS");
         }
     }
 
