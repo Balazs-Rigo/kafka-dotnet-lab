@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/ConsumerDemo/ConsumerDemo.csproj" />
     <Project Path="src/OrderApi/OrderApi.csproj" Id="84b6dce5-5757-4b34-8676-28b40fd0dda2" />
+    <Project Path="src/OrderProcessor/OrderProcessor.csproj" Id="e7e92bf7-0b02-48e7-a75e-3bd1becb9338" />
     <Project Path="src/ProducerDemo/ProducerDemo.csproj" />
     <Project Path="src/RetryConsumerDemo/RetryConsumerDemo.csproj" Id="eaa199c2-a5fa-48d0-8ce0-9da3a4bae29c" />
   </Folder>
