@@ -1,28 +1,31 @@
 ﻿using Confluent.Kafka;
-using Microsoft.Data.Sqlite;
 
 namespace ConsumerDemo;
 
 internal class Program
 {
-    private const string ConnectionString = "Data Source=consumer-demo.db";
-
-    static void Main(string[] args)
+    static async Task Main(string[] args)
     {
-        InitializeDatabase();
-
-        var config = new ConsumerConfig
+        var consumerConfig = new ConsumerConfig
         {
             BootstrapServers = "localhost:9092",
-            GroupId = "manual-commit-demo",
+            GroupId = "retry-demo-group",
             AutoOffsetReset = AutoOffsetReset.Earliest,
             EnableAutoCommit = false
         };
 
-        using var consumer =
-            new ConsumerBuilder<string, string>(config).Build();
+        var producerConfig = new ProducerConfig
+        {
+            BootstrapServers = "localhost:9092"
+        };
 
-        consumer.Subscribe("commit-demo");
+        using var consumer =
+            new ConsumerBuilder<string, string>(consumerConfig).Build();
+
+        using var producer =
+            new ProducerBuilder<string, string>(producerConfig).Build();
+
+        consumer.Subscribe("retry-demo");
 
         Console.WriteLine("Waiting for messages...");
 
@@ -32,118 +35,46 @@ internal class Program
 
             Console.WriteLine();
             Console.WriteLine($"Received: {result.Message.Value}");
-            Console.WriteLine($"Partition: {result.Partition}");
             Console.WriteLine($"Offset: {result.Offset}");
 
-            consumer.Commit(result);
+            try
+            {
+                ProcessMessage(result.Message.Value);
 
-            Console.WriteLine();
-            Console.WriteLine("Kafka offset committed.");
-            Console.WriteLine("CRASH NOW before business logic.");
-            Console.WriteLine("Press ENTER only if you want business logic to run.");
+                consumer.Commit(result);
 
-            Console.ReadLine();
+                Console.WriteLine("Successfully processed.");
+                Console.WriteLine("Original offset committed.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Processing failed: {ex.Message}");
+                Console.WriteLine("Sending to retry topic...");
 
-            Console.WriteLine();
-            Console.WriteLine("Executing business logic...");
-            Console.WriteLine("DATABASE WRITE SUCCESS");
+                await producer.ProduceAsync(
+                    "retry-demo-retry",
+                    new Message<string, string>
+                    {
+                        Key = result.Message.Key,
+                        Value = result.Message.Value
+                    });
+
+                Console.WriteLine("Message moved to retry topic.");
+
+                consumer.Commit(result);
+
+                Console.WriteLine("Original offset committed.");
+            }
         }
     }
 
-    private static void InitializeDatabase()
+    private static void ProcessMessage(string value)
     {
-        using var connection = new SqliteConnection(ConnectionString);
-        connection.Open();
+        if (value == "order-bad")
+        {
+            throw new Exception("Simulated payment failure");
+        }
 
-        var command = connection.CreateCommand();
-
-        command.CommandText = """
-            CREATE TABLE IF NOT EXISTS Orders
-            (
-                Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                OrderNumber TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS ProcessedMessages
-            (
-                MessageId TEXT PRIMARY KEY,
-                ProcessedAtUtc TEXT NOT NULL
-            );
-            """;
-
-        command.ExecuteNonQuery();
-    }
-
-    private static bool IsAlreadyProcessed(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        string messageId)
-    {
-        var command = connection.CreateCommand();
-        command.Transaction = transaction;
-
-        command.CommandText = """
-            SELECT COUNT(*)
-            FROM ProcessedMessages
-            WHERE MessageId = $messageId;
-            """;
-
-        command.Parameters.AddWithValue("$messageId", messageId);
-
-        var count = (long)command.ExecuteScalar()!;
-
-        return count > 0;
-    }
-
-    private static void InsertOrder(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        string orderNumber)
-    {
-        var command = connection.CreateCommand();
-        command.Transaction = transaction;
-
-        command.CommandText = """
-            INSERT INTO Orders (OrderNumber)
-            VALUES ($orderNumber);
-            """;
-
-        command.Parameters.AddWithValue("$orderNumber", orderNumber);
-
-        command.ExecuteNonQuery();
-
-        Console.WriteLine($"Order inserted: {orderNumber}");
-    }
-
-    private static void SaveProcessedMessage(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        string messageId)
-    {
-        var command = connection.CreateCommand();
-        command.Transaction = transaction;
-
-        command.CommandText = """
-            INSERT INTO ProcessedMessages
-            (
-                MessageId,
-                ProcessedAtUtc
-            )
-            VALUES
-            (
-                $messageId,
-                $processedAtUtc
-            );
-            """;
-
-        command.Parameters.AddWithValue("$messageId", messageId);
-
-        command.Parameters.AddWithValue(
-            "$processedAtUtc",
-            DateTime.UtcNow.ToString("O"));
-
-        command.ExecuteNonQuery();
-
-        Console.WriteLine($"Processed message saved: {messageId}");
+        Console.WriteLine($"Successfully processed: {value}");
     }
 }
