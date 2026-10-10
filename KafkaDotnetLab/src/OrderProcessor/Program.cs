@@ -1,23 +1,38 @@
 using Confluent.Kafka;
-using OrderProcessor;
 
-var builder = Host.CreateApplicationBuilder(args);
+namespace OrderProcessor;
 
-builder.Services.AddSingleton<IConsumer<string, string>>(_ =>
+public class Program
 {
-    var config = new ConsumerConfig
+    public static void Main(string[] args)
     {
-        BootstrapServers = "localhost:9092",
-        GroupId = "order-processor-group",
-        AutoOffsetReset = AutoOffsetReset.Earliest,
-        EnableAutoCommit = false
-    };
+        var builder = Host.CreateApplicationBuilder(args);
 
-    return new ConsumerBuilder<string, string>(config).Build();
-});
+        builder.Services
+            .AddSingleton<IConsumer<string, string>>(_ =>
+            {
+                var config = new ConsumerConfig
+                {
+                    BootstrapServers = "localhost:9092",
+                    GroupId = "order-processor-group",
+                    AutoOffsetReset = AutoOffsetReset.Earliest,
+                    EnableAutoCommit = false
+                };
+                return new ConsumerBuilder<string, string>(config).Build();
+            })
+            .AddSingleton<IProducer<string, string>>(_ =>
+            {
+                var config = new ProducerConfig
+                {
+                    BootstrapServers = "localhost:9092"
+                };
+                return new ProducerBuilder<string, string>(config).Build();
+            });
 
-builder.Services.AddHostedService<Worker>();
+        builder.Services.AddHostedService<Worker>();
 
-var host = builder.Build();
+        var host = builder.Build();
 
-host.Run();
+        host.Run();
+    }
+}

@@ -45,5 +45,3 @@ services:
 
 volumes:
   kafka-data:
-    external: true
-    name: infra_kafka-data

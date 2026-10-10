@@ -1,5 +1,7 @@
-﻿using Confluent.Kafka;
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.Sqlite;
+using OrderApi.Events;
+using System.Text.Json;
 
 namespace OrderApi.Controllers;
 
@@ -7,33 +9,126 @@ namespace OrderApi.Controllers;
 [Route("api/[controller]")]
 public class OrdersController : ControllerBase
 {
-    private readonly IProducer<string, string> _producer;
+    private readonly string _connectionString;
 
-    public OrdersController(IProducer<string, string> producer)
+    public OrdersController(IConfiguration configuration)
     {
-        _producer = producer;
+        _connectionString =
+            configuration.GetConnectionString("OrderDatabase")
+            ?? throw new InvalidOperationException(
+                "OrderDatabase connection string is missing.");
     }
 
     [HttpPost]
-    public async Task<IActionResult> CreateOrder(OrderRequest request)
+    public IActionResult CreateOrder(OrderRequest request)
     {
         var orderId = Guid.NewGuid();
+        var createdAtUtc = DateTime.UtcNow;
 
-        var result = await _producer.ProduceAsync(
-            "orders",
-            new Message<string, string>
-            {
-                Key = orderId.ToString(),
-                Value = request.Product
-            });
+        var orderCreatedEvent = new OrderCreatedEvent(
+            2,
+            orderId,
+            request.Product.ToString(),
+            createdAtUtc,
+            1999.99m);
 
-        return Ok(new
+        var payload = JsonSerializer.Serialize(orderCreatedEvent);
+
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+
+        using var transaction = connection.BeginTransaction();
+
+        try
         {
-            OrderId = orderId,
-            Topic = result.Topic,
-            Partition = result.Partition.Value,
-            Offset = result.Offset.Value
-        });
+            using (var orderCommand = connection.CreateCommand())
+            {
+                orderCommand.Transaction = transaction;
+
+                orderCommand.CommandText = """
+                    INSERT INTO Orders (
+                        Id,
+                        Product,
+                        CreatedAtUtc
+                    )
+                    VALUES (
+                        $id,
+                        $product,
+                        $createdAtUtc
+                    );
+                    """;
+
+                orderCommand.Parameters.AddWithValue(
+                    "$id",
+                    orderId.ToString());
+
+                orderCommand.Parameters.AddWithValue(
+                    "$product",
+                    request.Product.ToString());
+
+                orderCommand.Parameters.AddWithValue(
+                    "$createdAtUtc",
+                    createdAtUtc.ToString("O"));
+
+                orderCommand.ExecuteNonQuery();
+            }
+
+            using (var outboxCommand = connection.CreateCommand())
+            {
+                outboxCommand.Transaction = transaction;
+
+                outboxCommand.CommandText = """
+                    
+                        INSERT INTO OutboxMessages (
+                        Id,
+                        EventType,
+                        Payload,
+                        CreatedAtUtc,
+                        ProcessedAtUtc
+                        )
+                        VALUES (
+                        $id,
+                        $eventType,
+                        $payload,
+                        $createdAtUtc,
+                        NULL
+                        );
+                    
+                    """;
+
+                outboxCommand.Parameters.AddWithValue(
+                    "$id",
+                    Guid.NewGuid().ToString());
+
+                outboxCommand.Parameters.AddWithValue(
+                    "$eventType",
+                    "OrderCreated");
+
+                outboxCommand.Parameters.AddWithValue(
+                    "$payload",
+                    payload);
+
+                outboxCommand.Parameters.AddWithValue(
+                    "$createdAtUtc",
+                    createdAtUtc.ToString("O"));
+
+                outboxCommand.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
+
+            return Ok(new
+            {
+                OrderId = orderId,
+                SavedToDatabase = true,
+                OutboxCreated = true
+            });
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
     }
 }
 
